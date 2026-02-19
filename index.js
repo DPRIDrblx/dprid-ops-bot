@@ -196,3 +196,60 @@ ${link}`
 
   bot.sendMessage(msg.chat.id, "✅ Server link dikirim & OPS ditutup.");
 });
+
+// ================= TAMBAH PENGUMUMAN =================
+let pengumumanStep = {};
+let pengumumanData = {};
+
+bot.onText(/\/tambahpengumuman/, (msg) => {
+  if (!isAdmin(msg.from.id)) return bot.sendMessage(msg.chat.id, "❌ Bukan admin.");
+
+  pengumumanStep[msg.from.id] = "isi_pesan";
+  bot.sendMessage(msg.chat.id, "📢 Masukkan isi pengumuman:");
+});
+
+// Logic Handler Utama (Update bagian bot.on("message"))
+bot.on("message", async (msg) => {
+  const userId = msg.from.id;
+  const text = msg.text;
+
+  // Handler untuk Pengumuman
+  if (pengumumanStep[userId] && isAdmin(userId)) {
+    if (pengumumanStep[userId] === "isi_pesan") {
+      if (!text) return bot.sendMessage(msg.chat.id, "⚠️ Harap masukkan teks pengumuman.");
+      
+      pengumumanData[userId] = { pesan: text };
+      pengumumanStep[userId] = "foto_pengumuman";
+      return bot.sendMessage(msg.chat.id, "🖼️ Kirim Foto PNG Pengumuman (atau ketik 'none' jika tidak ada foto):");
+    }
+
+    if (pengumumanStep[userId] === "foto_pengumuman") {
+      const users = await User.find();
+      const pesanBroadcast = `📢 *PENGUMUMAN BARU*\n\n${pengumumanData[userId].pesan}`;
+
+      // Opsi Tanpa Foto
+      if (text && text.toLowerCase() === "none") {
+        for (let u of users) {
+          try { await bot.sendMessage(u.userId, pesanBroadcast, { parse_mode: "Markdown" }); } catch (e) {}
+        }
+        bot.sendMessage(msg.chat.id, "✅ Pengumuman teks berhasil dikirim!");
+      } 
+      // Opsi Dengan Foto
+      else if (msg.photo) {
+        const fileId = msg.photo[msg.photo.length - 1].file_id;
+        for (let u of users) {
+          try { await bot.sendPhoto(u.userId, fileId, { caption: pesanBroadcast, parse_mode: "Markdown" }); } catch (e) {}
+        }
+        bot.sendMessage(msg.chat.id, "✅ Pengumuman dengan foto berhasil dikirim!");
+      } else {
+        return bot.sendMessage(msg.chat.id, "⚠️ Kirim foto atau ketik 'none'.");
+      }
+
+      delete pengumumanStep[userId];
+      delete pengumumanData[userId];
+      return; // Stop eksekusi agar tidak masuk ke handler lain
+    }
+  }
+
+  // ... (Logika handler OPS Anda yang lama tetap di bawah sini)
+});
