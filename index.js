@@ -12,10 +12,7 @@ mongoose.connect(process.env.MONGO_URI)
   .catch(err => console.log(err));
 
 // ================= SCHEMA =================
-const userSchema = new mongoose.Schema({
-  userId: Number,
-});
-
+const userSchema = new mongoose.Schema({ userId: Number });
 const opsSchema = new mongoose.Schema({
   namaKereta: String,
   trainset: String,
@@ -33,223 +30,141 @@ function isAdmin(id) {
   return id == process.env.ADMIN_ID;
 }
 
-// ================= DAFTAR =================
+// ================= COMMANDS =================
 bot.onText(/\/daftar/, async (msg) => {
   const userId = msg.from.id;
-
   const existing = await User.findOne({ userId });
-  if (existing) {
-    return bot.sendMessage(msg.chat.id, "✅ Kamu sudah terdaftar.");
-  }
-
+  if (existing) return bot.sendMessage(msg.chat.id, "✅ Kamu sudah terdaftar.");
   await User.create({ userId });
   bot.sendMessage(msg.chat.id, "🔔 Berhasil daftar notifikasi OPS DPRID!");
 });
 
-// ================= HAPUS DAFTAR =================
 bot.onText(/\/hapusdaftar/, async (msg) => {
   await User.deleteOne({ userId: msg.from.id });
   bot.sendMessage(msg.chat.id, "❌ Kamu berhenti menerima notifikasi.");
 });
 
-// ================= TAMBAH OPS =================
-let step = {};
-let tempData = {};
+bot.onText(/\/cekuser/, async (msg) => {
+  if (!isAdmin(msg.from.id)) return;
+  const totalUser = await User.countDocuments();
+  bot.sendMessage(msg.chat.id, `📊 *STATISTIK BOT*\n\nTotal Subscriber aktif: *${totalUser}* orang`, { parse_mode: "Markdown" });
+});
+
+bot.onText(/\/listops/, async (msg) => {
+  if (!isAdmin(msg.from.id)) return;
+  const opsList = await OPS.find({ status: "aktif" });
+  if (opsList.length === 0) return bot.sendMessage(msg.chat.id, "Tidak ada OPS aktif.");
+  let text = "📋 OPS AKTIF:\n\n";
+  opsList.forEach((o, i) => { text += `${i + 1}. ${o.namaKereta} (${o.jadwal})\n`; });
+  bot.sendMessage(msg.chat.id, text);
+});
+
+// ================= STATE MANAGEMENT =================
+let step = {};           // Untuk Tambah OPS
+let tempData = {};       // Data OPS sementara
+let pengumumanStep = {}; // Untuk Pengumuman
+let pengumumanData = {}; // Data Pengumuman sementara
+let serverStep = {};     // Untuk Server Open
 
 bot.onText(/\/tambahops/, (msg) => {
-  if (!isAdmin(msg.from.id)) return bot.sendMessage(msg.chat.id, "❌ Bukan admin.");
-
+  if (!isAdmin(msg.from.id)) return;
   step[msg.from.id] = "nama";
   bot.sendMessage(msg.chat.id, "🚆 Masukkan Nama Kereta:");
 });
 
-bot.on("message", async (msg) => {
-  if (!step[msg.from.id]) return;
-  if (!isAdmin(msg.from.id)) return;
-
-  const userStep = step[msg.from.id];
-
-  if (userStep === "nama") {
-    tempData[msg.from.id] = { namaKereta: msg.text };
-    step[msg.from.id] = "trainset";
-    return bot.sendMessage(msg.chat.id, "🚄 Masukkan Trainset:");
-  }
-
-  if (userStep === "trainset") {
-    tempData[msg.from.id].trainset = msg.text;
-    step[msg.from.id] = "jadwal";
-    return bot.sendMessage(msg.chat.id, "🕒 Masukkan Jadwal:");
-  }
-
-  if (userStep === "jadwal") {
-    tempData[msg.from.id].jadwal = msg.text;
-    step[msg.from.id] = "surat";
-    return bot.sendMessage(msg.chat.id, "📄 Kirim PNG Surat Perjalanan:");
-  }
-
-  if (userStep === "surat" && msg.photo) {
-    const fileId = msg.photo[msg.photo.length - 1].file_id;
-    tempData[msg.from.id].suratFileId = fileId;
-
-    const newOps = await OPS.create(tempData[msg.from.id]);
-
-    const users = await User.find();
-
-    for (let u of users) {
-      bot.sendPhoto(u.userId, fileId, {
-        caption:
-`🚆 OPS BARU DPRID
-
-Nama Kereta: ${newOps.namaKereta}
-Trainset: ${newOps.trainset}
-Jadwal: ${newOps.jadwal}
-
-🟡 Status: MENUNGGU SERVER OPEN`
-      });
-    }
-
-    delete step[msg.from.id];
-    delete tempData[msg.from.id];
-
-    bot.sendMessage(msg.chat.id, "✅ OPS berhasil dibuat & dikirim!");
-  }
-});
-
-// ================= LIST OPS =================
-bot.onText(/\/listops/, async (msg) => {
-  if (!isAdmin(msg.from.id)) return;
-
-  const opsList = await OPS.find({ status: "aktif" });
-
-  if (opsList.length === 0)
-    return bot.sendMessage(msg.chat.id, "Tidak ada OPS aktif.");
-
-  let text = "📋 OPS AKTIF:\n\n";
-  opsList.forEach((o, i) => {
-    text += `${i + 1}. ${o.namaKereta} (${o.jadwal})\n`;
-  });
-
-  bot.sendMessage(msg.chat.id, text);
-});
-
-// ================= SERVER OPEN =================
-let serverStep = {};
-
-bot.onText(/\/serveropen/, async (msg) => {
-  if (!isAdmin(msg.from.id)) return;
-
-  const opsList = await OPS.find({ status: "aktif" });
-
-  if (opsList.length === 0)
-    return bot.sendMessage(msg.chat.id, "Tidak ada OPS aktif.");
-
-  let text = "Pilih OPS:\n\n";
-  opsList.forEach((o, i) => {
-    text += `${i + 1}. ${o.namaKereta}\n`;
-  });
-
-  serverStep[msg.from.id] = opsList;
-  bot.sendMessage(msg.chat.id, text);
-});
-
-bot.on("message", async (msg) => {
-  if (!serverStep[msg.from.id]) return;
-  if (!isAdmin(msg.from.id)) return;
-
-  const opsList = serverStep[msg.from.id];
-  const index = parseInt(msg.text) - 1;
-
-  if (!opsList[index]) return;
-
-  const selectedOps = opsList[index];
-
-  bot.sendMessage(msg.chat.id, "Kirim link server Roblox:");
-  serverStep[msg.from.id] = { selectedOps };
-});
-
-bot.on("message", async (msg) => {
-  if (!serverStep[msg.from.id]?.selectedOps) return;
-  if (!isAdmin(msg.from.id)) return;
-
-  const link = msg.text;
-  const selectedOps = serverStep[msg.from.id].selectedOps;
-
-  const users = await User.find();
-
-  for (let u of users) {
-    await bot.sendPhoto(u.userId, selectedOps.suratFileId, {
-      caption:
-`🟢 SERVER OPEN!
-
-🚆 ${selectedOps.namaKereta}
-Trainset: ${selectedOps.trainset}
-Jadwal: ${selectedOps.jadwal}
-
-🔗 Link Server:
-${link}`
-    });
-  }
-
-  await OPS.updateOne({ _id: selectedOps._id }, { status: "selesai" });
-
-  delete serverStep[msg.from.id];
-
-  bot.sendMessage(msg.chat.id, "✅ Server link dikirim & OPS ditutup.");
-});
-
-// ================= TAMBAH PENGUMUMAN =================
-let pengumumanStep = {};
-let pengumumanData = {};
-
 bot.onText(/\/tambahpengumuman/, (msg) => {
-  if (!isAdmin(msg.from.id)) return bot.sendMessage(msg.chat.id, "❌ Bukan admin.");
-
+  if (!isAdmin(msg.from.id)) return;
   pengumumanStep[msg.from.id] = "isi_pesan";
   bot.sendMessage(msg.chat.id, "📢 Masukkan isi pengumuman:");
 });
 
-// Logic Handler Utama (Update bagian bot.on("message"))
+bot.onText(/\/serveropen/, async (msg) => {
+  if (!isAdmin(msg.from.id)) return;
+  const opsList = await OPS.find({ status: "aktif" });
+  if (opsList.length === 0) return bot.sendMessage(msg.chat.id, "Tidak ada OPS aktif.");
+  let text = "Pilih nomor OPS untuk dibuka:\n\n";
+  opsList.forEach((o, i) => { text += `${i + 1}. ${o.namaKereta}\n`; });
+  serverStep[msg.from.id] = { type: "pilih_ops", list: opsList };
+  bot.sendMessage(msg.chat.id, text);
+});
+
+// ================= HANDLER UTAMA (Satu Fungsi untuk Semua Input) =================
 bot.on("message", async (msg) => {
   const userId = msg.from.id;
   const text = msg.text;
+  if (!isAdmin(userId)) return;
 
-  // Handler untuk Pengumuman
-  if (pengumumanStep[userId] && isAdmin(userId)) {
+  // 1. Logika Tambah Pengumuman
+  if (pengumumanStep[userId]) {
     if (pengumumanStep[userId] === "isi_pesan") {
-      if (!text) return bot.sendMessage(msg.chat.id, "⚠️ Harap masukkan teks pengumuman.");
-      
+      if (!text) return;
       pengumumanData[userId] = { pesan: text };
       pengumumanStep[userId] = "foto_pengumuman";
-      return bot.sendMessage(msg.chat.id, "🖼️ Kirim Foto PNG Pengumuman (atau ketik 'none' jika tidak ada foto):");
+      return bot.sendMessage(msg.chat.id, "🖼️ Kirim Foto PNG (atau ketik 'none'):");
     }
-
     if (pengumumanStep[userId] === "foto_pengumuman") {
       const users = await User.find();
-      const pesanBroadcast = `📢 *PENGUMUMAN BARU*\n\n${pengumumanData[userId].pesan}`;
-
-      // Opsi Tanpa Foto
-      if (text && text.toLowerCase() === "none") {
-        for (let u of users) {
-          try { await bot.sendMessage(u.userId, pesanBroadcast, { parse_mode: "Markdown" }); } catch (e) {}
-        }
-        bot.sendMessage(msg.chat.id, "✅ Pengumuman teks berhasil dikirim!");
-      } 
-      // Opsi Dengan Foto
-      else if (msg.photo) {
+      const caption = `📢 *PENGUMUMAN BARU*\n\n${pengumumanData[userId].pesan}`;
+      if (text?.toLowerCase() === "none") {
+        for (let u of users) { try { await bot.sendMessage(u.userId, caption, { parse_mode: "Markdown" }); } catch(e){} }
+      } else if (msg.photo) {
         const fileId = msg.photo[msg.photo.length - 1].file_id;
-        for (let u of users) {
-          try { await bot.sendPhoto(u.userId, fileId, { caption: pesanBroadcast, parse_mode: "Markdown" }); } catch (e) {}
-        }
-        bot.sendMessage(msg.chat.id, "✅ Pengumuman dengan foto berhasil dikirim!");
-      } else {
-        return bot.sendMessage(msg.chat.id, "⚠️ Kirim foto atau ketik 'none'.");
-      }
-
-      delete pengumumanStep[userId];
-      delete pengumumanData[userId];
-      return; // Stop eksekusi agar tidak masuk ke handler lain
+        for (let u of users) { try { await bot.sendPhoto(u.userId, fileId, { caption, parse_mode: "Markdown" }); } catch(e){} }
+      } else return;
+      delete pengumumanStep[userId]; delete pengumumanData[userId];
+      return bot.sendMessage(msg.chat.id, "✅ Pengumuman Terkirim!");
     }
   }
 
-  // ... (Logika handler OPS Anda yang lama tetap di bawah sini)
+  // 2. Logika Tambah OPS
+  if (step[userId]) {
+    if (step[userId] === "nama") {
+      tempData[userId] = { namaKereta: text };
+      step[userId] = "trainset";
+      return bot.sendMessage(msg.chat.id, "🚄 Masukkan Trainset:");
+    }
+    if (step[userId] === "trainset") {
+      tempData[userId].trainset = text;
+      step[userId] = "jadwal";
+      return bot.sendMessage(msg.chat.id, "🕒 Masukkan Jadwal:");
+    }
+    if (step[userId] === "jadwal") {
+      tempData[userId].jadwal = text;
+      step[userId] = "surat";
+      return bot.sendMessage(msg.chat.id, "📄 Kirim Foto Surat:");
+    }
+    if (step[userId] === "surat" && msg.photo) {
+      const fileId = msg.photo[msg.photo.length - 1].file_id;
+      tempData[userId].suratFileId = fileId;
+      const newOps = await OPS.create(tempData[userId]);
+      const users = await User.find();
+      for (let u of users) {
+        bot.sendPhoto(u.userId, fileId, { caption: `🚆 OPS BARU\n\nKereta: ${newOps.namaKereta}\nJadwal: ${newOps.jadwal}\n\n🟡 Status: MENUNGGU SERVER OPEN` });
+      }
+      delete step[userId]; delete tempData[userId];
+      return bot.sendMessage(msg.chat.id, "✅ OPS Dibuat!");
+    }
+  }
+
+  // 3. Logika Server Open
+  if (serverStep[userId]) {
+    if (serverStep[userId].type === "pilih_ops") {
+      const index = parseInt(text) - 1;
+      const selected = serverStep[userId].list[index];
+      if (!selected) return bot.sendMessage(msg.chat.id, "❌ Nomor salah.");
+      serverStep[userId] = { type: "input_link", ops: selected };
+      return bot.sendMessage(msg.chat.id, "🔗 Kirim link server Roblox:");
+    }
+    if (serverStep[userId].type === "input_link") {
+      const link = text;
+      const ops = serverStep[userId].ops;
+      const users = await User.find();
+      for (let u of users) {
+        await bot.sendPhoto(u.userId, ops.suratFileId, { caption: `🟢 SERVER OPEN!\n\n🚆 ${ops.namaKereta}\n🔗 Link: ${link}` });
+      }
+      await OPS.updateOne({ _id: ops._id }, { status: "selesai" });
+      delete serverStep[userId];
+      return bot.sendMessage(msg.chat.id, "✅ Server dibuka & OPS selesai!");
+    }
+  }
 });
